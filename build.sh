@@ -253,6 +253,7 @@ if (( TEST )); then
         Sources/Vorssaint/Services/Media/MediaSupport.swift
         Sources/Vorssaint/Core/QuitProtectionSupport.swift
         Sources/Vorssaint/Core/QuitProtectionStrings.swift
+        Sources/Vorssaint/Services/FaceUnlock/FaceUnlockAuthorization.swift
         Sources/Vorssaint/Services/FaceUnlock/FaceUnlockPolicy.swift
         Sources/Vorssaint/Services/FaceUnlock/FaceUnlockSession.swift
         Sources/Vorssaint/Core/FaceUnlockStrings.swift

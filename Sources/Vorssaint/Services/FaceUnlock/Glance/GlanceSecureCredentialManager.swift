@@ -5,9 +5,9 @@
 //  GlanceSecureCredentialManager.swift
 //  glance
 //
-//  Two-tier storage on GlanceKeychainManager: a Touch-ID-gated session key (unwrapped once per launch) wraps an ungated encrypted
-//  password blob, safe to read anytime — including the lock screen, where no app UI exists to host a Touch ID prompt.
-//  Touch ID authorizes the session; nothing yet authorizes each individual unlock beyond that (face recognition will).
+//  An authenticated session key wraps the password and face templates.
+//  Provisioned builds use Keychain user presence; local builds explicitly
+//  authenticate with macOS before reading their separate login-Keychain key.
 //
 
 import Foundation
@@ -121,44 +121,51 @@ enum GlanceSecureCredentialManager {
         GlanceKeychainManager.exists(account: passwordBlobAccount)
     }
 
-    /// Prompts Touch ID and unwraps the session key, creating it Touch-ID-gated on first run. Caches only after a real gated
-    /// read-back succeeds — `SecItemAdd` alone returns success even if the user hit Cancel on the auth UI, and bridging
-    /// `LAContext.evaluatePolicy` synchronously via a semaphore deadlocks the thread pool and crashes the process.
-    /// Must succeed before `savePassword`/`readPassword`. Blocking; call from a background task.
-    nonisolated static func unlockSession(reason: String, permit: FaceUnlockPermit) throws {
-        guard permit.isValid else { throw CancellationError() }
+    /// Never block an executor waiting for LocalAuthentication's callback.
+    /// Local builds use application-gated authentication plus the login
+    /// Keychain's app ACL; provisioned builds retain OS-enforced key access.
+    nonisolated static func unlockSession(reason: String, permit: FaceUnlockPermit) async throws {
+        guard permit.isValid, !Task.isCancelled else { throw CancellationError() }
         if cachedKey() != nil { return }
-
-        // The existence check, not the read, decides whether a key gets created (load-bearing): a cancelled Touch ID prompt on
-        // a user-presence item reports `errSecItemNotFound`, indistinguishable from no key — deciding on the read's error would
-        // mint a fresh key (destroying the one that decrypts existing data) on every mis-tap.
-        if GlanceKeychainManager.exists(account: sessionKeyAccount) {
-            let context = LAContext()
-            context.localizedReason = reason
-            let data = try GlanceKeychainManager.read(account: sessionKeyAccount, context: context)
-            setCachedKey(SymmetricKey(data: data), permit: permit)
-            return
+        let context = LAContext()
+        context.localizedReason = reason
+        var data = try await withTaskCancellationHandler {
+            try await FaceUnlockAuthorization.perform(permit: permit, authenticate: {
+                if GlanceKeychainManager.storage == .loginKeychain {
+                    guard try await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) else {
+                        throw GlanceKeychainError.authenticationFailed
+                    }
+                }
+            }, load: {
+                try loadOrCreateSessionKey(context: context, permit: permit)
+            })
+        } onCancel: {
+            context.invalidate()
         }
+        defer { data.resetBytes(in: 0..<data.count) }
+        setCachedKey(SymmetricKey(data: data), permit: permit)
+    }
 
-        // No key at all, but minting one is still destructive if data is already encrypted under a previous key (e.g. a
-        // re-signed dev build) — refuse rather than silently render it unreadable forever.
-        guard !hasSessionEncryptedData else {
+    private nonisolated static func loadOrCreateSessionKey(context: LAContext, permit: FaceUnlockPermit) throws -> Data {
+        let protected = GlanceKeychainManager.storage == .protectedKeychain
+        // An attributes-only check determines absence. A failed or cancelled
+        // read never causes a new key to replace an existing one.
+        if try GlanceKeychainManager.contains(account: sessionKeyAccount) {
+            return try GlanceKeychainManager.read(account: sessionKeyAccount, context: protected ? context : nil)
+        }
+        guard try !GlanceKeychainManager.contains(account: passwordBlobAccount), !GlanceSecureFaceStore.exists else {
             throw GlanceSecureCredentialError.sessionKeyUnavailable
         }
-
+        guard permit.isValid else { throw CancellationError() }
         let key = SymmetricKey(size: .bits256)
-        let access = try GlanceKeychainManager.makeUserPresenceAccessControl()
-        try GlanceKeychainManager.save(
-            account: sessionKeyAccount,
-            data: key.withUnsafeBytes { Data($0) },
-            accessControl: access
-        )
-
-        // Read back through the gated path rather than trusting the write — only a real read proves authentication happened.
-        let readBackContext = LAContext()
-        readBackContext.localizedReason = reason
-        let data = try GlanceKeychainManager.read(account: sessionKeyAccount, context: readBackContext)
-        setCachedKey(SymmetricKey(data: data), permit: permit)
+        var bytes = key.withUnsafeBytes { Data($0) }
+        defer { bytes.resetBytes(in: 0..<bytes.count) }
+        let access = protected ? try GlanceKeychainManager.makeUserPresenceAccessControl() : nil
+        try GlanceKeychainManager.save(account: sessionKeyAccount, data: bytes, accessControl: access)
+        // A protected add alone does not establish user presence; read it back
+        // through the gated path before caching. Local authentication already
+        // succeeded before this function was allowed to create or read a key.
+        return try GlanceKeychainManager.read(account: sessionKeyAccount, context: protected ? context : nil)
     }
 
     /// Checked without needing the key itself, so this stays answerable precisely when the key can't be read.

@@ -47,6 +47,9 @@ changes reconnect the indicator to the host surface without duplicate windows.
 Cancelling, sleeping or unlocking removes the scan indicator immediately.
 Turn off **Show lock-screen indicator** to hide both presentations.
 
+The enable switch shows the next unfinished setup step and becomes available
+only after authorization, password verification, enrollment and both permissions.
+
 You must authorize the credential session after every app launch. **Pause
 session**, uninstalling the feature, switching to another user or quitting
 clears the session key and in-memory templates. Disabling the feature cancels
@@ -67,21 +70,49 @@ scan's permit. There is still an unavoidable race between checking lock state
 and posting a keyboard event; macOS supplies no atomic third-party unlock API.
 Do not treat this mechanism as equivalent to Apple's secure biometric hardware.
 
-Passwords and face templates use Glance's AES-GCM design with a Keychain session
-key gated by system user presence. The decrypted key stays in memory only for
-the authorized app session. Plaintext buffers are cleared after use where
+Passwords and face templates use Glance's AES-GCM design. Session authorization
+supports the app's actual signing configuration:
+
+- **Local/ad-hoc builds:** macOS LocalAuthentication must succeed before the app
+  creates or reads its session key from the login Keychain. The login Keychain
+  enforces the item's app access controls; the app enforces authentication before
+  loading the key. This is not an OS-enforced biometric ACL on the key itself.
+- **Provisioned builds:** the existing Keychain user-presence ACL remains in use
+  when the signature declares an App ID or Keychain access group. Missing or
+  invalid entitlements fail explicitly; there is no automatic downgrade on error.
+
+The decrypted key stays in memory only for the authorized app session. Plaintext buffers are cleared after use where
 possible; Swift and system APIs can still create temporary copies. Camera
 frames are never recorded, and no biometric data or password leaves the Mac.
 
 Storage uses the running app's bundle identifier plus `.face-unlock` for
 Keychain, and `Application Support/<bundle id>/FaceUnlock` for encrypted
-face templates. The directory is owner-only. No Glance storage is migrated.
+face templates. Local builds append `.local-auth` to both storage namespaces,
+keeping provisioned data separate and untouched if signing changes. Switching
+between these modes requires setting up that mode; it never silently migrates
+or weakens protection of existing keys. Forget removes the current mode's data.
+The directories are owner-only. No Glance storage is migrated.
 Settings backups omit authorization, enablement, consent and camera identity;
 only the ordinary appearance preference and feature installation are portable.
 
 The overlay uses Vorssaint's existing private window-server bridge. If macOS
 removes that API, the indicator may be unavailable; normal password login is
 always available. This integration does not request Input Monitoring.
+
+## Keychain entitlement error on older fork builds
+
+`A required entitlement is not present` (`-34018`) occurred when the imported
+Glance key-access code ran in a local build without a provisioned access group.
+Pull the latest fork, rebuild and reopen the updated app, then select
+**Authorize this session**. The local-build path now works without an Apple
+Developer account and still requires successful macOS authentication. Complete
+the remaining setup steps before enabling the switch. Do not add a made-up Team
+ID or disable Keychain protections to work around this error.
+
+The dedicated `./Tools/test-face-unlock-keychain.sh` check verifies cancellation,
+authentication ordering, signing-mode selection and a real login-Keychain
+save/read/update/delete using a unique disposable account. It never accesses a
+saved password or face template, and does not authenticate on your behalf.
 
 ## Model and source terms
 
@@ -107,9 +138,11 @@ Local validation on 8 October 2026, MacBook Pro (Apple M5), macOS 27.0.1:
 - `./build.sh`: optimized app bundle built without compiler warnings.
 - `./build/stage/Vorssaint.app/Contents/MacOS/Vorssaint --selftest`: `SELFTEST OK`,
   including a real Core ML prediction on a synthetic image using the bundled model.
-- `./build.sh --test`: 114,975 checks passed, including the new Face Unlock suite;
+- `./build.sh --test`: 114,983 checks passed, including the new Face Unlock suite;
   preference cleanup, uninstall and developer-install isolation checks also passed.
 - `./Tools/test-glance-liveness.sh`: all imported synthetic liveness tests passed.
+- `./Tools/test-face-unlock-keychain.sh`: signing selection, authentication ordering,
+  cancellation and the real disposable login-Keychain roundtrip passed.
 - `codesign --verify --deep --strict build/stage/Vorssaint.app`: passed for the
   local ad-hoc signature. The executable retains a macOS 14.0 deployment target.
 - Native settings inspected in a separate preview bundle with all other features

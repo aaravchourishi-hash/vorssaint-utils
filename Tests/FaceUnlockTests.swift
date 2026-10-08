@@ -5,6 +5,17 @@ import CoreGraphics
 
 enum FaceUnlockTests {
     static func run(_ suite: TestSuite) {
+        func requirement(missing: Int? = nil, busy: Bool = false) -> FaceUnlockText? {
+            let states = (0..<6).map { $0 != missing }
+            return FaceUnlockPolicy.setupRequirement(consent: states[0], authorized: states[1], passwordSaved: states[2],
+                                                     faceEnrolled: states[3], cameraGranted: states[4], accessibilityGranted: states[5], busy: busy)
+        }
+        let steps: [FaceUnlockText] = [.accept, .authorize, .save, .enroll, .cameraDenied, .permissions]
+        for (index, step) in steps.enumerated() {
+            suite.expect(requirement(missing: index) == step, "enable switch explains missing setup step \(index)")
+        }
+        suite.expect(requirement() == nil, "complete setup releases the enable switch")
+        suite.expect(requirement(busy: true) == .setup, "in-flight setup cannot enable scanning")
         // Every authorization gate is necessary; a stale or partial setup cannot scan.
         func canScan(_ missing: Int? = nil) -> Bool {
             let values = (0..<10).map { $0 != missing }

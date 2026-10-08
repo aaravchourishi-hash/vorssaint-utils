@@ -24,7 +24,13 @@ struct FaceUnlockSettings: View {
                 SettingsRow(symbol: "faceid", title: text[.title], badge: "Glance · Beta", caption: text[.summary]) {
                     Toggle(text[.enable], isOn: Binding(get: { enabled }, set: { service.setEnabled($0) }))
                         .labelsHidden().toggleStyle(.switch)
-                        .disabled(!enabled && (!service.ready || !consent || !permissions.accessibility))
+                        .disabled(!enabled && !service.ready)
+                        .help(text[service.setupRequirement ?? .enable])
+                }
+                if !enabled, let requirement = service.setupRequirement {
+                    Label(text[requirement], systemImage: "arrow.down.circle")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 notice
                 if consent {

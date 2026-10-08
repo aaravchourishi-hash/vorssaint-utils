@@ -15,6 +15,9 @@ clear in-memory templates on session lock; capture and recognition managed
 by Vorssaint; heavy liveness required; only the active user's lock screen can
 receive a password; every keyboard batch checks a revocable permit. Native
 settings and lock-screen rendering use Vorssaint's existing components.
+Local builds authenticate with macOS before accessing a separate login-Keychain
+session key; provisioned builds preserve Glance's OS-enforced user-presence ACL.
+There is no automatic downgrade when a protected Keychain operation fails.
 
 Glance's updater, telemetry-free standalone lifecycle, branding, onboarding
 windows, Face Lab and input-monitoring keyboard hook are not imported.

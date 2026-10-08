@@ -11,7 +11,7 @@ enum GlanceSecureFaceStore {
             guard let container = PrivateFileStore.containerURL else {
                 throw CocoaError(.fileNoSuchFile)
             }
-            return container.appendingPathComponent("FaceUnlock/face-identities.enc")
+            return container.appendingPathComponent("FaceUnlock\(GlanceKeychainManager.storageSuffix)/face-identities.enc")
         }
     }
 

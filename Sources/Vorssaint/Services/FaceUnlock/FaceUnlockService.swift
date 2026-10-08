@@ -42,7 +42,15 @@ final class FaceUnlockService: ObservableObject {
         }
     }
 
-    var ready: Bool { authorized && passwordSaved && faceEnrolled && !busy && !enrolling }
+    var setupRequirement: FaceUnlockText? {
+        FaceUnlockPolicy.setupRequirement(consent: consented,
+                                          authorized: authorized && GlanceSecureCredentialManager.isSessionUnlocked,
+                                          passwordSaved: passwordSaved, faceEnrolled: faceEnrolled,
+                                          cameraGranted: AVCaptureDevice.authorizationStatus(for: .video) == .authorized,
+                                          accessibilityGranted: FaceUnlockKeystrokes.isAccessibilityTrusted(),
+                                          busy: busy || enrolling)
+    }
+    var ready: Bool { setupRequirement == nil }
     /// Recovery must remain available even if the wrapping key is missing and
     /// only an encrypted enrollment (no password) survived a previous setup.
     var hasStoredSetup: Bool { passwordSaved || GlanceSecureFaceStore.exists }
@@ -83,7 +91,11 @@ final class FaceUnlockService: ObservableObject {
     }
 
     func setEnabled(_ enabled: Bool) {
-        guard !enabled || (AppFeature.faceUnlock.isAvailable && consented && ready) else { return }
+        guard !enabled || (AppFeature.faceUnlock.isAvailable && ready) else {
+            status = .setup
+            detail = FaceUnlockStrings.current[setupRequirement ?? .setup]
+            return
+        }
         UserDefaults.standard.set(enabled, forKey: DefaultsKey.faceUnlockEnabled)
         if !enabled { pauseSession(); removeObservers() }
         syncWithPreferences()
@@ -104,7 +116,7 @@ final class FaceUnlockService: ObservableObject {
             defer { self.authorizationInFlight = false }
             do {
                 let reason = FaceUnlockStrings.current[.authorize]
-                try await Task.detached { try GlanceSecureCredentialManager.unlockSession(reason: reason, permit: permission) }.value
+                try await GlanceSecureCredentialManager.unlockSession(reason: reason, permit: permission)
                 guard self.isCurrent(token) else { return }
                 GlanceFaceEnrollmentStore.shared.reloadIfUnlocked()
                 if let failure = GlanceFaceEnrollmentStore.shared.loadFailure { throw SetupError.message(failure) }

@@ -38,6 +38,18 @@ enum FaceUnlockPolicy {
     static let scanDuration: TimeInterval = 10
     static let sampleCount = 5
 
+    static func setupRequirement(consent: Bool, authorized: Bool, passwordSaved: Bool, faceEnrolled: Bool,
+                                 cameraGranted: Bool, accessibilityGranted: Bool, busy: Bool) -> FaceUnlockText? {
+        if !consent { return .accept }
+        if busy { return .setup }
+        if !authorized { return .authorize }
+        if !passwordSaved { return .save }
+        if !faceEnrolled { return .enroll }
+        if !cameraGranted { return .cameraDenied }
+        if !accessibilityGranted { return .permissions }
+        return nil
+    }
+
     static func canScan(installed: Bool, enabled: Bool, consent: Bool,
                         sessionAuthorized: Bool, passwordSaved: Bool, faceEnrolled: Bool,
                         cameraGranted: Bool, accessibilityGranted: Bool,
@@ -68,12 +80,4 @@ enum FaceUnlockPolicy {
     static func continuesTrack(previous: UUID?, current: UUID?, elapsed: TimeInterval) -> Bool {
         previous != nil && previous == current && elapsed >= 0 && elapsed < 0.5
     }
-}
-
-/// A revoked scan can never resume credential injection after an await.
-final class FaceUnlockPermit: @unchecked Sendable {
-    private let lock = NSLock()
-    private var revoked = false
-    func revoke() { lock.lock(); revoked = true; lock.unlock() }
-    var isValid: Bool { lock.lock(); defer { lock.unlock() }; return !revoked }
 }

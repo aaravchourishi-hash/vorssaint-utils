@@ -38,6 +38,9 @@ jobs:
       - name: Glance liveness tests
         run: ./Tools/test-glance-liveness.sh
 
+      - name: Face Unlock authentication and Keychain checks
+        run: ./Tools/test-face-unlock-keychain.sh
+
       - name: Unit tests
         run: ./build.sh --test
 
@@ -61,6 +64,9 @@ jobs:
 
       - name: Glance liveness tests
         run: ./Tools/test-glance-liveness.sh
+
+      - name: Face Unlock authentication and Keychain checks
+        run: ./Tools/test-face-unlock-keychain.sh
 
       - name: Unit tests
         run: ./build.sh --test

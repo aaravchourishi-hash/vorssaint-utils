@@ -37,30 +37,76 @@ enum GlanceKeychainError: LocalizedError {
 }
 
 enum GlanceKeychainManager {
-    nonisolated static let service = (Bundle.main.bundleIdentifier ?? "com.vorssaint.face-unlock.tests") + ".face-unlock"
+    enum Storage: Equatable {
+        case loginKeychain, protectedKeychain
+
+        /// An entitlement claim selects the protected path, which the OS then
+        /// validates. An invalid claim fails; it never downgrades on error.
+        static func select(entitlements: [String: Any]) -> Self {
+            let groups = entitlements["keychain-access-groups"] as? [String] ?? []
+            let appID = entitlements["com.apple.application-identifier"] as? String ?? ""
+            return !appID.isEmpty || groups.contains(where: { !$0.isEmpty })
+                ? .protectedKeychain : .loginKeychain
+        }
+    }
+
+    nonisolated static let storage: Storage = {
+        var code: SecCode?
+        var staticCode: SecStaticCode?
+        var information: CFDictionary?
+        guard SecCodeCopySelf([], &code) == errSecSuccess, let code,
+              SecCodeCopyStaticCode(code, [], &staticCode) == errSecSuccess, let staticCode,
+              SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &information) == errSecSuccess,
+              let values = information as? [String: Any] else { return .loginKeychain }
+        return Storage.select(entitlements: values[kSecCodeInfoEntitlementsDict as String] as? [String: Any] ?? [:])
+    }()
+
+    // Local storage has a separate namespace. Changing signing never silently
+    // re-wraps, overwrites or downgrades an existing protected session key.
+    nonisolated static let storageSuffix = storage == .loginKeychain ? ".local-auth" : ""
+    nonisolated static let service = (Bundle.main.bundleIdentifier ?? "com.vorssaint.face-unlock.tests") + ".face-unlock" + storageSuffix
+
+    private static func query(account: String) -> [String: Any] {
+        var query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+        // Older integration builds stored only the ACL-protected wrapping key
+        // in the data-protection keychain. Preserve that exact split.
+        if storage == .protectedKeychain, account == "sessionKey" {
+            query[kSecUseDataProtectionKeychain as String] = true
+        }
+        return query
+    }
 
     /// Attributes-only existence check — never prompts, even for access-controlled items.
     nonisolated static func exists(account: String) -> Bool {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
+        (try? contains(account: account)) ?? false
+    }
+
+    /// Authorization must distinguish absence from a Keychain failure. A
+    /// failed lookup must never create a replacement for an existing key.
+    nonisolated static func contains(account: String) throws -> Bool {
+        var query = query(account: account)
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        query[kSecReturnAttributes as String] = true
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        query[kSecUseAuthenticationContext as String] = context
         var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        return status != errSecItemNotFound
+        switch SecItemCopyMatching(query as CFDictionary, &item) {
+        case errSecSuccess, errSecInteractionNotAllowed: return true
+        case errSecItemNotFound: return false
+        case let status: throw GlanceKeychainError.osStatus(status)
+        }
     }
 
     /// Pass an `LAContext` to authorize a read on an access-controlled item — the OS presents the prompt during this call.
     nonisolated static func read(account: String, context: LAContext? = nil) throws -> Data {
-        var query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
+        var query = query(account: account)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
         if let context {
             query[kSecUseAuthenticationContext as String] = context
         }
@@ -84,11 +130,7 @@ enum GlanceKeychainManager {
     /// `errSecDuplicateItem`. Existing access-control attributes are preserved;
     /// this method's access-control argument applies when adding a new item.
     nonisolated static func save(account: String, data: Data, accessControl: SecAccessControl? = nil) throws {
-        let itemQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
+        let itemQuery = query(account: account)
 
         let updateStatus = SecItemUpdate(
             itemQuery as CFDictionary,
@@ -103,17 +145,14 @@ enum GlanceKeychainManager {
             throw GlanceKeychainError.osStatus(updateStatus)
         }
 
-        var addQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecValueData as String: data
-        ]
+        var addQuery = itemQuery
+        addQuery[kSecValueData as String] = data
         if let accessControl {
             addQuery[kSecAttrAccessControl as String] = accessControl
-        } else {
-            addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         }
+        // The file-based login Keychain uses app ACLs, not iOS accessibility
+        // attributes. Adding SecAccessControl here would select the protected
+        // keychain and fail with -34018 for local/ad-hoc builds.
 
         let status = SecItemAdd(addQuery as CFDictionary, nil)
         if status == errSecSuccess { return }
@@ -132,11 +171,7 @@ enum GlanceKeychainManager {
     }
 
     nonisolated static func delete(account: String) throws {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
+        let query = query(account: account)
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw GlanceKeychainError.osStatus(status)
