@@ -1041,6 +1041,7 @@ extension AppFeature {
         case .screenOCR: return s.ocrName
         case .screenshot: return FeatureStrings.screenshot(L10n.shared.language).pageTitle
         case .screenRecorder: return FeatureStrings.recorder(L10n.shared.language).pageTitle
+        case .faceUnlock: return FaceUnlockStrings.current[.title]
         case .cameraPreview: return FeatureStrings.cameraPreview(L10n.shared.language).pageTitle
         case .wallpaper: return FeatureStrings.wallpaper(L10n.shared.language).pageTitle
         case .notchGestures: return FeatureStrings.notchGestures(L10n.shared.language).title
@@ -1125,6 +1126,7 @@ extension AppFeature {
         case .screenOCR: return hub.descScreenOCR
         case .screenshot: return FeatureStrings.screenshot(L10n.shared.language).hubDescription
         case .screenRecorder: return FeatureStrings.recorder(L10n.shared.language).hubDescription
+        case .faceUnlock: return FaceUnlockStrings.current[.summary]
         case .cameraPreview: return FeatureStrings.cameraPreview(L10n.shared.language).hubDescription
         case .wallpaper: return FeatureStrings.wallpaper(L10n.shared.language).hubDescription
         case .notchGestures: return FeatureStrings.notchGestures(L10n.shared.language).description
@@ -1202,7 +1204,7 @@ extension AppPermission {
         case .microphone:
             return FeatureStrings.recorder(L10n.shared.language).microphonePermissionExplain
         case .calendar: return FeatureStrings.notchCalendar(L10n.shared.language).permission
-        case .camera: return FeatureStrings.cameraPreview(L10n.shared.language).permExplain
+        case .camera: return FaceUnlockStrings.current[.cameraUse]
         case .appManagement: return hub.explainAppManagement
         }
     }

@@ -253,6 +253,9 @@ if (( TEST )); then
         Sources/Vorssaint/Services/Media/MediaSupport.swift
         Sources/Vorssaint/Core/QuitProtectionSupport.swift
         Sources/Vorssaint/Core/QuitProtectionStrings.swift
+        Sources/Vorssaint/Services/FaceUnlock/FaceUnlockPolicy.swift
+        Sources/Vorssaint/Services/FaceUnlock/FaceUnlockSession.swift
+        Sources/Vorssaint/Core/FaceUnlockStrings.swift
         Sources/Vorssaint/Core/Defaults.swift
         Sources/Vorssaint/Core/NotchStrings.swift
         Sources/Vorssaint/Core/NotchTourStrings.swift
@@ -655,6 +658,12 @@ mkdir -p "$STAGE/Contents/Frameworks"
 cp "build/$NOW_PLAYING_ADAPTER" "$STAGE/Contents/Frameworks/$NOW_PLAYING_ADAPTER"
 cp Resources/now-playing.pl "$STAGE/Contents/Resources/now-playing.pl"
 cp Resources/agent-prices.json "$STAGE/Contents/Resources/agent-prices.json"
+echo "▸ Compiling face recognition model…"
+mkdir -p "$STAGE/Contents/Resources/FaceUnlock"
+swift Tools/CompileFaceUnlockModel.swift Resources/FaceUnlock/ArcFace.mlpackage \
+    "$STAGE/Contents/Resources/FaceUnlock/ArcFace.mlmodelc"
+cp ThirdParty/Glance/LICENSE "$STAGE/Contents/Resources/FaceUnlock/Glance-LICENSE.txt"
+cp ThirdParty/Glance/MODEL-NOTICE.md "$STAGE/Contents/Resources/FaceUnlock/MODEL-NOTICE.md"
 cp Resources/com.vorssaint.utils.fan-control.plist \
     "$STAGE/Contents/Library/LaunchDaemons/$FAN_HELPER_ID.plist"
 cp Resources/Info.plist "$STAGE/Contents/Info.plist"

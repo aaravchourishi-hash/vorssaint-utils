@@ -21,6 +21,7 @@ final class NotchLockScreenModel: ObservableObject {
     /// sleeping and waking, and cleared once it unlocks.
     @Published var playedWhileLocked = false
     @Published var padlockOpen = false
+    @Published var faceUnlockPhase: FaceUnlockIndicatorPhase?
 
     func showsMusic(_ playback: NotchPlayback?) -> Bool {
         gates.music && playback.map {
@@ -54,12 +55,8 @@ struct NotchLockScreenIsland: View {
             .fill(.black)
             .overlay {
                 HStack(spacing: 0) {
-                    Image(systemName: model.padlockOpen ? "lock.open.fill" : "lock.fill")
-                        .font(.system(size: min(13, size.height * 0.42), weight: .semibold))
-                        .foregroundStyle(.white)
-                        .contentTransition(.symbolEffect(.replace))
-                        .symbolEffect(.bounce, options: .speed(1.4), value: reduceMotion ? false : model.padlockOpen)
-                        .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: model.padlockOpen)
+                    FaceUnlockIslandSymbol(phase: model.faceUnlockPhase, padlockOpen: model.padlockOpen,
+                                           size: min(13, size.height * 0.42))
                         .frame(width: padlockSide, height: padlockSide)
                         .padding(.leading, max(0, min(geometry.compactMusicArtworkInset, wing - padlockSide)))
                         .frame(width: wing, height: size.height, alignment: .leading)
@@ -78,6 +75,26 @@ struct NotchLockScreenIsland: View {
             .padding(.top, origin.y)
             .frame(width: window?.width ?? size.width, height: window?.height ?? size.height, alignment: .topLeading)
             .accessibilityHidden(true)
+    }
+}
+
+/// The same lock-to-face transition in the host island and its fallback.
+/// Only a real session unlock opens the padlock; sending a password does not.
+struct FaceUnlockIslandSymbol: View {
+    let phase: FaceUnlockIndicatorPhase?
+    var padlockOpen = false
+    var size: CGFloat = 18
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Image(systemName: padlockOpen ? "lock.open.fill" : phase?.symbol ?? "lock.fill")
+            .font(.system(size: size, weight: .semibold))
+            .foregroundStyle(phase == .failed && !padlockOpen ? Color.orange : Color.white)
+            .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
+            .symbolEffect(.pulse, options: .repeating, isActive: !reduceMotion && phase == .scanning && !padlockOpen)
+            .symbolEffect(.bounce, options: .speed(1.4), value: reduceMotion ? false : padlockOpen)
+            .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: phase)
+            .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: padlockOpen)
     }
 }
 

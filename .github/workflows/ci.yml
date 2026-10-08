@@ -33,7 +33,10 @@ jobs:
         run: ./build.sh
 
       - name: Selftest
-        run: ./build/Vorssaint --selftest
+        run: ./build/stage/Vorssaint.app/Contents/MacOS/Vorssaint --selftest
+
+      - name: Glance liveness tests
+        run: ./Tools/test-glance-liveness.sh
 
       - name: Unit tests
         run: ./build.sh --test
@@ -51,10 +54,13 @@ jobs:
         run: ./build.sh
 
       - name: Selftest
-        run: ./build/Vorssaint --selftest
+        run: ./build/stage/Vorssaint.app/Contents/MacOS/Vorssaint --selftest
 
       - name: Package DMG
         run: ./Tools/make-dmg.sh
+
+      - name: Glance liveness tests
+        run: ./Tools/test-glance-liveness.sh
 
       - name: Unit tests
         run: ./build.sh --test

@@ -1,0 +1,148 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Jonathan Zhou
+// Adapted from jonnyoo/glance; see ThirdParty/Glance/LICENSE and README.md.
+//
+//  GlanceArcFaceEmbedder.swift
+//  glance
+//
+//  Requires a canonically-aligned 112x112 input (see GlanceFaceAligner).
+//
+
+import CoreML
+import CoreGraphics
+import CoreVideo
+
+enum GlanceArcFaceEmbedderError: LocalizedError {
+    case modelNotFound
+    case modelLoadFailed(String)
+    case pixelBufferCreationFailed
+    case unexpectedInputSize(got: (Int, Int), expected: Int)
+    case unexpectedOutput(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .modelNotFound:
+            return "Face recognition model is missing. Rebuild with ./build.sh; see docs/FACE-UNLOCK.md."
+        case .modelLoadFailed(let detail):
+            return "Failed to load the ArcFace Core ML model: \(detail)"
+        case .pixelBufferCreationFailed:
+            return "Couldn't prepare the aligned face image for Core ML."
+        case .unexpectedInputSize(let got, let expected):
+            return "GlanceArcFaceEmbedder expects a \(expected)x\(expected) aligned image, got \(got.0)x\(got.1). Run the face through GlanceFaceAligner first."
+        case .unexpectedOutput(let detail):
+            return "ArcFace model produced an unexpected output: \(detail)"
+        }
+    }
+}
+
+final class GlanceArcFaceEmbedder: GlanceFaceEmbedder, @unchecked Sendable {
+    nonisolated let name = "ArcFace (w600k_mbf)"
+    nonisolated let modelIdentifier = "arcface-w600k_mbf-v1"
+    nonisolated let embeddingDimension = 512
+    nonisolated let requiresAlignment = true
+
+    private static let inputSize = GlanceFaceAligner.outputSize
+    private static let inputName = "input_image"
+    private static let outputName = "embedding"
+
+    // Loaded once and reused — model load dominates a single inference.
+    private let model: MLModel
+    private let pixelBufferPool: CVPixelBufferPool
+
+    /// Throws if the bundled model is missing. Face unlock fails closed; no alternate recognizer is used.
+    init() throws {
+        guard let modelURL = Self.locateModel() else {
+            throw GlanceArcFaceEmbedderError.modelNotFound
+        }
+
+        let configuration = MLModelConfiguration()
+        configuration.computeUnits = .all
+
+        do {
+            model = try MLModel(contentsOf: modelURL, configuration: configuration)
+        } catch {
+            throw GlanceArcFaceEmbedderError.modelLoadFailed(error.localizedDescription)
+        }
+
+        guard let pool = Self.makePixelBufferPool(size: Self.inputSize) else {
+            throw GlanceArcFaceEmbedderError.pixelBufferCreationFailed
+        }
+        pixelBufferPool = pool
+    }
+
+    /// Both names are checked in case the file was added under a different name.
+    private static func locateModel() -> URL? {
+        for name in ["ArcFace", "w600k_mbf"] {
+            if let url = Bundle.main.url(forResource: name, withExtension: "mlmodelc", subdirectory: "FaceUnlock") {
+                return url
+            }
+        }
+        return nil
+    }
+
+    private static func makePixelBufferPool(size: Int) -> CVPixelBufferPool? {
+        let attributes: [String: Any] = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: size,
+            kCVPixelBufferHeightKey as String: size,
+            kCVPixelBufferIOSurfacePropertiesKey as String: [:] as [String: Any],
+        ]
+        var pool: CVPixelBufferPool?
+        CVPixelBufferPoolCreate(kCFAllocatorDefault, nil, attributes as CFDictionary, &pool)
+        return pool
+    }
+
+    /// `MLModel.prediction(from:)` is synchronous/blocking — callers run embedders off the main actor.
+    nonisolated func embedding(for face: CGImage) throws -> [Float] {
+        guard face.width == Self.inputSize, face.height == Self.inputSize else {
+            throw GlanceArcFaceEmbedderError.unexpectedInputSize(got: (face.width, face.height), expected: Self.inputSize)
+        }
+
+        var pixelBufferOut: CVPixelBuffer?
+        let status = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pixelBufferPool, &pixelBufferOut)
+        guard status == kCVReturnSuccess, let pixelBuffer = pixelBufferOut else {
+            throw GlanceArcFaceEmbedderError.pixelBufferCreationFailed
+        }
+        try Self.render(face, into: pixelBuffer)
+
+        let input = try MLDictionaryFeatureProvider(dictionary: [Self.inputName: MLFeatureValue(pixelBuffer: pixelBuffer)])
+        let output = try model.prediction(from: input)
+
+        guard let multiArray = output.featureValue(for: Self.outputName)?.multiArrayValue else {
+            throw GlanceArcFaceEmbedderError.unexpectedOutput("no '\(Self.outputName)' output found")
+        }
+        guard multiArray.count == embeddingDimension else {
+            throw GlanceArcFaceEmbedderError.unexpectedOutput("expected \(embeddingDimension) floats, got \(multiArray.count)")
+        }
+
+        let raw = Self.floatVector(from: multiArray)
+        return GlanceFaceEmbedding.l2Normalized(raw)
+    }
+
+    private static func render(_ image: CGImage, into pixelBuffer: CVPixelBuffer) throws {
+        CVPixelBufferLockBaseAddress(pixelBuffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
+
+        guard let context = CGContext(
+            data: CVPixelBufferGetBaseAddress(pixelBuffer),
+            width: CVPixelBufferGetWidth(pixelBuffer),
+            height: CVPixelBufferGetHeight(pixelBuffer),
+            bitsPerComponent: 8,
+            bytesPerRow: CVPixelBufferGetBytesPerRow(pixelBuffer),
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+        ) else {
+            throw GlanceArcFaceEmbedderError.pixelBufferCreationFailed
+        }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+    }
+
+    /// `MLMultiArray` storage isn't guaranteed to be a flat, stride-1 buffer, so this indexes via the array's own subscript.
+    private static func floatVector(from array: MLMultiArray) -> [Float] {
+        var result = [Float](repeating: 0, count: array.count)
+        for i in 0..<array.count {
+            result[i] = array[i].floatValue
+        }
+        return result
+    }
+}

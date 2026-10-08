@@ -11,6 +11,22 @@ enum SelfTest {
         var failures: [String] = []
         var warnings: [String] = []
 
+        // The CLI binary has no resources; the assembled bundle must load and run
+        // the exact model shipped to users, without a camera or any face data.
+        if Bundle.main.bundlePath.hasSuffix(".app") {
+            do {
+                let embedder = try GlanceArcFaceEmbedder()
+                guard let context = CGContext(data: nil, width: 112, height: 112, bitsPerComponent: 8,
+                                              bytesPerRow: 112 * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+                      let image = context.makeImage() else { throw CocoaError(.fileReadUnknown) }
+                let embedding = try embedder.embedding(for: image)
+                if embedding.count != 512 || !embedding.allSatisfy(\.isFinite) {
+                    failures.append("Face Unlock model output is invalid")
+                }
+            } catch { failures.append("Face Unlock model: \(error.localizedDescription)") }
+        }
+
         var assertionID = IOPMAssertionID(0)
         let result = IOPMAssertionCreateWithName("PreventUserIdleSystemSleep" as CFString,
                                                  IOPMAssertionLevel(kIOPMAssertionLevelOn),

@@ -34,10 +34,16 @@ final class NotchLockScreenService {
     private var padlockWork: DispatchWorkItem?
     private var shownFrames = Frames()
     private var wasLocked = false
+    /// Face Unlock follows the existing surface, including display changes.
+    @Published private(set) var hasIsland = false
 
     private init() {}
 
     var isShowing: Bool { space != nil }
+
+    func setFaceUnlockPhase(_ phase: FaceUnlockIndicatorPhase?) {
+        model.faceUnlockPhase = phase
+    }
 
     func sync(_ session: NotchSessionState) {
         let locking = session.locked && !wasLocked
@@ -136,6 +142,7 @@ final class NotchLockScreenService {
         self.space = space
         self.scene = scene
         self.island = island
+        hasIsland = island != nil
         shownFrames = frames
         if closingPadlock {
             let work = DispatchWorkItem { [weak self] in self?.model.padlockOpen = false }
@@ -177,6 +184,8 @@ final class NotchLockScreenService {
     }
 
     private func hide(unlocking: Bool, stopsSources: Bool) {
+        model.faceUnlockPhase = nil
+        hasIsland = false
         if stopsSources, !scene.isEmpty {
             NotchMusicService.shared.stop()
             NotchDownloadService.shared.stop()

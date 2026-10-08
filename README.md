@@ -1,3 +1,8 @@
+> **Experimental Glance integration fork.** Adds optional Face Unlock to the
+> Features hub and native settings. See [setup and limitations](docs/FACE-UNLOCK.md).
+> The bundled pretrained face model has [separate research-only terms](ThirdParty/Glance/MODEL-NOTICE.md).
+> This is not an official Vorssaint release.
+
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/logo-dark.svg">

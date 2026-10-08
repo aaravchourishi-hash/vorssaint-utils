@@ -100,6 +100,11 @@ enum SettingsBackupSupport {
     /// out by construction (they are not preference keys), listed here only
     /// when they would otherwise slip in through the registered set.
     static let machineStateKeys: Set<String> = [
+        // Consent, camera identity and authorization are specific to this Mac.
+        // Passwords and face templates live outside defaults and never enter backups.
+        DefaultsKey.faceUnlockEnabled,
+        DefaultsKey.faceUnlockConsent,
+        DefaultsKey.faceUnlockCamera,
         DefaultsKey.displaysSwitchedOff,
         DefaultsKey.displaysSwitchedOffFingerprints,
         DefaultsKey.dockPreviewRestoreAutohide,
